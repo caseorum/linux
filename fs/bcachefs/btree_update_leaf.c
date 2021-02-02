@@ -15,6 +15,7 @@
 #include "journal.h"
 #include "journal_reclaim.h"
 #include "keylist.h"
+#include "subvolume.h"
 #include "replicas.h"
 
 #include <linux/prefetch.h>
@@ -810,21 +811,24 @@ static int extent_handle_overwrites(struct btree_trans *trans,
 		}
 	}
 
-	if (!bkey_cmp(k.k->p, bkey_start_pos(&i->k->k)))
+	if (!bkey_cmp(k.k->p, start))
 		goto next;
 
 	while (bkey_cmp(i->k->k.p, bkey_start_pos(k.k)) > 0) {
+		bool front_split = bkey_cmp(bkey_start_pos(k.k), start) < 0;
+		bool back_split  = bkey_cmp(k.k->p, i->k->k.p) > 0;
+
 		/*
 		 * If we're going to be splitting a compressed extent, note it
 		 * so that __bch2_trans_commit() can increase our disk
 		 * reservation:
 		 */
-		if (bkey_cmp(bkey_start_pos(k.k), start) < 0 &&
-		    bkey_cmp(k.k->p, i->k->k.p) > 0 &&
+		if (((front_split && back_split) ||
+		     ((front_split || back_split) && k.k->p.snapshot != i->k->k.p.snapshot)) &&
 		    (compressed_sectors = bch2_bkey_sectors_compressed(k)))
 			trans->extra_journal_res += compressed_sectors;
 
-		if (bkey_cmp(bkey_start_pos(k.k), start) < 0) {
+		if (front_split) {
 			update = bch2_trans_kmalloc(trans, bkey_bytes(k.k));
 			if ((ret = PTR_ERR_OR_ZERO(update)))
 				goto out;
@@ -835,6 +839,30 @@ static int extent_handle_overwrites(struct btree_trans *trans,
 
 			update_iter = bch2_trans_get_iter(trans, i->btree_id, update->k.p,
 							  BTREE_ITER_NOT_EXTENTS|
+							  BTREE_ITER_ALL_SNAPSHOTS|
+							  BTREE_ITER_INTENT);
+			ret = bch2_btree_iter_traverse(update_iter);
+			if (ret)
+				goto out;
+
+			bch2_trans_update(trans, update_iter, update, i->trigger_flags);
+			bch2_trans_iter_put(trans, update_iter);
+		}
+
+		if (k.k->p.snapshot != i->k->k.p.snapshot &&
+		    (front_split || back_split)) {
+			update = bch2_trans_kmalloc(trans, bkey_bytes(k.k));
+			if ((ret = PTR_ERR_OR_ZERO(update)))
+				break;
+
+			bkey_reassemble(update, k);
+
+			bch2_cut_front(start, update);
+			bch2_cut_back(i->k->k.p, update);
+
+			update_iter = bch2_trans_get_iter(trans, i->btree_id, update->k.p,
+							  BTREE_ITER_NOT_EXTENTS|
+							  BTREE_ITER_ALL_SNAPSHOTS|
 							  BTREE_ITER_INTENT);
 			ret = bch2_btree_iter_traverse(update_iter);
 			if (ret)
@@ -854,13 +882,18 @@ static int extent_handle_overwrites(struct btree_trans *trans,
 				goto out;
 		}
 
-		if (bkey_cmp(k.k->p, i->k->k.p) > 0) {
+		if (back_split) {
 			update = bch2_trans_kmalloc(trans, bkey_bytes(k.k));
 			if ((ret = PTR_ERR_OR_ZERO(update)))
 				goto out;
 
 			bkey_reassemble(update, k);
 			bch2_cut_front(i->k->k.p, update);
+
+			bch2_btree_iter_set_snapshot(iter, i->k->k.p.snapshot);
+			ret = bch2_btree_iter_traverse(iter);
+			if (ret)
+				goto out;
 
 			bch2_trans_update(trans, iter, update, i->trigger_flags);
 			goto out;
@@ -1008,6 +1041,38 @@ err:
 	goto retry;
 }
 
+static int need_whiteout_for_snapshot(struct btree_trans *trans,
+				      enum btree_id btree_id, struct bpos pos)
+{
+	struct btree_iter *iter;
+	struct bkey_s_c k;
+	int ret;
+
+	if (pos.snapshot == U32_MAX)
+		return 0;
+
+	pos.snapshot++;
+
+	for_each_btree_key(trans, iter, btree_id, pos,
+			   BTREE_ITER_ALL_SNAPSHOTS, k, ret) {
+		if (bkey_cmp(k.k->p, pos))
+			break;
+
+		ret = bch2_snapshot_is_ancestor(trans,
+						iter->snapshot,
+						k.k->p.snapshot);
+		if (ret < 0)
+			break;
+		if (ret) {
+			ret = !bkey_whiteout(k.k);
+			break;
+		}
+	}
+	bch2_trans_iter_put(trans, iter);
+
+	return ret;
+}
+
 int bch2_trans_update(struct btree_trans *trans, struct btree_iter *iter,
 		      struct bkey_i *k, enum btree_trigger_flags flags)
 {
@@ -1049,6 +1114,16 @@ int bch2_trans_update(struct btree_trans *trans, struct btree_iter *iter,
 	}
 
 	BUG_ON(n.iter->flags & BTREE_ITER_IS_EXTENTS);
+
+	if (bkey_deleted(&n.k->k) &&
+	    (iter->flags & BTREE_ITER_FILTER_SNAPSHOTS)) {
+		ret = need_whiteout_for_snapshot(trans, n.btree_id, n.k->k.p);
+		if (unlikely(ret < 0))
+			return ret;
+
+		if (ret)
+			n.k->k.type = KEY_TYPE_whiteout;
+	}
 
 	n.iter->flags |= BTREE_ITER_KEEP_UNTIL_COMMIT;
 
