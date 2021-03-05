@@ -374,7 +374,8 @@ static int btree_key_cache_flush_pos(struct btree_trans *trans,
 
 	b_iter = bch2_trans_get_iter(trans, key.btree_id, key.pos,
 				     BTREE_ITER_SLOTS|
-				     BTREE_ITER_INTENT);
+				     BTREE_ITER_INTENT|
+				     BTREE_ITER_ALL_SNAPSHOTS);
 	c_iter = bch2_trans_get_iter(trans, key.btree_id, key.pos,
 				     BTREE_ITER_CACHED|
 				     BTREE_ITER_CACHED_NOFILL|

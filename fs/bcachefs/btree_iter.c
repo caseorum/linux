@@ -13,6 +13,7 @@
 #include "extents.h"
 #include "journal.h"
 #include "replicas.h"
+#include "subvolume.h"
 
 #include <linux/prefetch.h>
 #include <trace/events/bcachefs.h>
@@ -648,11 +649,65 @@ void bch2_btree_trans_verify_iters(struct btree_trans *trans, struct btree *b)
 		bch2_btree_iter_verify_level(iter, b->c.level);
 }
 
+static int bch2_btree_iter_verify_ret(struct btree_iter *iter, struct bkey_s_c k)
+{
+	struct btree_trans *trans = iter->trans;
+	struct btree_iter *copy;
+	struct bkey_s_c prev;
+	int ret = 0;
+
+	if (!bch2_debug_check_iterators)
+		return 0;
+
+	if (!(iter->flags & BTREE_ITER_FILTER_SNAPSHOTS))
+		return 0;
+
+	if (bkey_err(k) || !k.k)
+		return 0;
+
+	BUG_ON(!__bch2_snapshot_is_ancestor(trans->c,
+					    iter->snapshot,
+					    k.k->p.snapshot));
+
+	copy = bch2_trans_copy_iter(trans, iter);
+	copy->flags |= BTREE_ITER_ALL_SNAPSHOTS;
+	copy->flags &= ~BTREE_ITER_FILTER_SNAPSHOTS;
+	copy->flags &= ~BTREE_ITER_IS_EXTENTS;
+	copy->flags &= ~BTREE_ITER_WITH_UPDATES;
+
+	prev = bch2_btree_iter_prev(copy);
+	if (!prev.k)
+		goto out;
+
+	ret = bkey_err(prev);
+	if (ret)
+		goto out;
+
+	if (!bkey_cmp(prev.k->p, k.k->p) &&
+	    __bch2_snapshot_is_ancestor(trans->c, iter->snapshot,
+					prev.k->p.snapshot) > 0) {
+		char buf1[100], buf2[200];
+
+		bch2_bkey_to_text(&PBUF(buf1), k.k);
+		bch2_bkey_to_text(&PBUF(buf2), prev.k);
+
+		panic("iter snap %u\n"
+		      "k    %s\n"
+		      "prev %s\n",
+		      iter->snapshot,
+		      buf1, buf2);
+	}
+out:
+	bch2_trans_iter_put(trans, copy);
+	return ret;
+}
+
 #else
 
 static inline void bch2_btree_iter_verify_level(struct btree_iter *iter, unsigned l) {}
 static inline void bch2_btree_iter_verify(struct btree_iter *iter) {}
 static inline void bch2_btree_iter_verify_entry_exit(struct btree_iter *iter) {}
+static inline int bch2_btree_iter_verify_ret(struct btree_iter *iter, struct bkey_s_c k) { return 0; }
 
 #endif
 
@@ -1669,6 +1724,7 @@ static inline struct bkey_i *btree_trans_peek_updates(struct btree_iter *iter,
 struct bkey_s_c bch2_btree_iter_peek(struct btree_iter *iter)
 {
 	struct bpos search_key = btree_iter_search_key(iter);
+	struct btree_trans *trans = iter->trans;
 	struct bkey_i *next_update;
 	struct bkey_s_c k;
 	int ret;
@@ -1694,7 +1750,23 @@ start:
 		}
 
 		if (likely(k.k)) {
-			if (bkey_deleted(k.k)) {
+			/*
+			 * We can never have a key in a leaf node at POS_MAX, so
+			 * we don't have to check these successor() calls:
+			 */
+			if ((iter->flags & BTREE_ITER_FILTER_SNAPSHOTS)) {
+				ret = bch2_snapshot_is_ancestor(trans,
+								iter->snapshot,
+								k.k->p.snapshot);
+				if (unlikely(ret < 0))
+					return bkey_s_c_err(ret);
+				if (!ret) {
+					search_key = bpos_successor(k.k->p);
+					goto start;
+				}
+			}
+
+			if (bkey_whiteout(k.k)) {
 				search_key = bkey_successor(iter, k.k->p);
 				goto start;
 			}
@@ -1715,9 +1787,17 @@ start:
 	else if (bkey_cmp(bkey_start_pos(k.k), iter->pos) > 0)
 		iter->pos = bkey_start_pos(k.k);
 
+	if (iter->flags & BTREE_ITER_FILTER_SNAPSHOTS)
+		iter->pos.snapshot = iter->snapshot;
+
+	iter->should_be_locked = true;
+
 	bch2_btree_iter_verify_entry_exit(iter);
 	bch2_btree_iter_verify(iter);
-	iter->should_be_locked = true;
+	ret = bch2_btree_iter_verify_ret(iter, k);
+	if (unlikely(ret))
+		return bkey_s_c_err(ret);
+
 	return k;
 }
 
@@ -1760,8 +1840,8 @@ struct bkey_s_c bch2_btree_iter_peek_prev(struct btree_iter *iter)
 		k = btree_iter_level_peek(iter, l);
 		if (!k.k ||
 		    ((iter->flags & BTREE_ITER_IS_EXTENTS)
-		     ? bkey_cmp(bkey_start_pos(k.k), iter->pos) >= 0
-		     : bkey_cmp(bkey_start_pos(k.k), iter->pos) > 0))
+		     ? bpos_cmp(bkey_start_pos(k.k), iter->pos) >= 0
+		     : bpos_cmp(bkey_start_pos(k.k), iter->pos) > 0))
 			k = btree_iter_level_prev(iter, l);
 
 		if (likely(k.k))
@@ -1834,7 +1914,7 @@ struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_iter *iter)
 		return bkey_s_c_err(ret);
 
 	if (btree_iter_type(iter) == BTREE_ITER_CACHED ||
-	    !(iter->flags & BTREE_ITER_IS_EXTENTS)) {
+	    !(iter->flags & (BTREE_ITER_IS_EXTENTS|BTREE_ITER_FILTER_SNAPSHOTS))) {
 		struct bkey_i *next_update;
 		struct bkey_cached *ck;
 
@@ -1909,9 +1989,13 @@ struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_iter *iter)
 		}
 	}
 
+	iter->should_be_locked = true;
+
 	bch2_btree_iter_verify_entry_exit(iter);
 	bch2_btree_iter_verify(iter);
-	iter->should_be_locked = true;
+	ret = bch2_btree_iter_verify_ret(iter, k);
+	if (unlikely(ret))
+		return bkey_s_c_err(ret);
 
 	return k;
 }
@@ -2112,6 +2196,13 @@ struct btree_iter *__bch2_trans_get_iter(struct btree_trans *trans,
 	if ((flags & BTREE_ITER_TYPE) != BTREE_ITER_NODES &&
 	    !btree_type_has_snapshots(btree_id))
 		flags &= ~BTREE_ITER_ALL_SNAPSHOTS;
+#if 0
+	/* let's have this be explicitly set: */
+	if ((flags & BTREE_ITER_TYPE) != BTREE_ITER_NODES &&
+	    btree_type_has_snapshots(btree_id) &&
+	    !(flags & BTREE_ITER_ALL_SNAPSHOTS))
+		flags |= BTREE_ITER_FILTER_SNAPSHOTS;
+#endif
 
 	if (!(flags & BTREE_ITER_ALL_SNAPSHOTS))
 		pos.snapshot = btree_type_has_snapshots(btree_id)
@@ -2154,7 +2245,6 @@ struct btree_iter *__bch2_trans_get_iter(struct btree_trans *trans,
 
 	trans->iters_live	|= 1ULL << iter->idx;
 	trans->iters_touched	|= 1ULL << iter->idx;
-
 	iter->flags = flags;
 
 	iter->snapshot = pos.snapshot;
