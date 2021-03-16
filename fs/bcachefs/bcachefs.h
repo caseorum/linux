@@ -380,6 +380,8 @@ enum gc_phase {
 	GC_PHASE_BTREE_alloc,
 	GC_PHASE_BTREE_quotas,
 	GC_PHASE_BTREE_reflink,
+	GC_PHASE_BTREE_subvolumes,
+	GC_PHASE_BTREE_snapshots,
 
 	GC_PHASE_PENDING_DELETE,
 };
@@ -562,6 +564,20 @@ struct btree_iter_buf {
 
 #define REPLICAS_DELTA_LIST_MAX	(1U << 16)
 
+struct bch_snapshot_table {
+	struct rcu_head		rcu;
+	u32			base;
+	u32			d[];
+};
+
+typedef struct {
+	u32		subvol;
+	u64		inum;
+} subvol_inum;
+
+#define BCACHEFS_ROOT_SUBVOL_INUM					\
+	((subvol_inum) { BCACHEFS_ROOT_SUBVOL,	BCACHEFS_ROOT_INO })
+
 struct bch_fs {
 	struct closure		cl;
 
@@ -632,6 +648,10 @@ struct bch_fs {
 
 	struct closure		sb_write;
 	struct mutex		sb_lock;
+
+	/* snapshot.c: */
+	struct bch_snapshot_table __rcu *snapshot_table;
+	struct mutex		snapshot_table_lock;
 
 	/* BTREE CACHE */
 	struct bio_set		btree_bio;
