@@ -872,7 +872,11 @@ retry:
 		if (ret && ret != -ENOENT)
 			break;
 
-		ret = lookup_inode(&trans, d_inum, &target, &target_snapshot);
+		ret = lockrestart_do(&trans,
+			__bch2_dirent_read_target(&trans, d,
+						  &target_subvol,
+						  &target_snapshot,
+						  &target_inum));
 		if (ret && ret != -ENOENT)
 			break;
 
