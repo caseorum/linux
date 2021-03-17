@@ -959,6 +959,7 @@ LE32_BITMASK(BCH_SUBVOLUME_SNAP,	struct bch_subvolume, flags,  1,  2)
 
 /* Snapshots */
 
+/* Add a backpointer field?  */
 struct bch_snapshot {
 	struct bch_val		v;
 	__le32			flags;
