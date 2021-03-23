@@ -1125,7 +1125,19 @@ int bch2_trans_update(struct btree_trans *trans, struct btree_iter *iter,
 			n.k->k.type = KEY_TYPE_whiteout;
 	}
 
-	n.iter->flags |= BTREE_ITER_KEEP_UNTIL_COMMIT;
+	/*
+	 * XXX this is a hack: we should either get rid of it, or stop passing
+	 * iterators to bch2_trans_update() entirely
+	 */
+	if (bpos_cmp(n.k->k.p, n.iter->real_pos)) {
+		n.iter = bch2_trans_get_iter(trans, n.btree_id, n.k->k.p,
+					     BTREE_ITER_ALL_SNAPSHOTS|
+					     BTREE_ITER_INTENT);
+		n.iter->flags |= BTREE_ITER_KEEP_UNTIL_COMMIT;
+		bch2_trans_iter_put(trans, n.iter);
+	} else {
+		n.iter->flags |= BTREE_ITER_KEEP_UNTIL_COMMIT;
+	}
 
 	/*
 	 * Pending updates are kept sorted: first, find position of new update,
