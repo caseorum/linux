@@ -5541,7 +5541,7 @@ noinstr int lock_is_held_type(const struct lockdep_map *lock, int read)
 	int ret = 0;
 
 	if (unlikely(!lockdep_enabled()))
-		return 1; /* avoid false negative lockdep_assert_held() */
+		return -1; /* avoid false negative lockdep_assert_held() */
 
 	raw_local_irq_save(flags);
 	check_flags(flags);
@@ -6319,6 +6319,26 @@ void debug_check_no_locks_held(void)
 		print_held_locks_bug();
 }
 EXPORT_SYMBOL_GPL(debug_check_no_locks_held);
+
+#ifdef CONFIG_LOCKDEP
+int lock_class_is_held(struct lock_class_key *key)
+{
+	struct task_struct *curr = current;
+	struct held_lock *hlock;
+
+	if (unlikely(!debug_locks))
+		return 0;
+
+	for (hlock = curr->held_locks;
+	     hlock < curr->held_locks + curr->lockdep_depth;
+	     hlock++)
+		if (hlock->instance->key == key)
+			return 1;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(lock_class_is_held);
+#endif
 
 #ifdef __KERNEL__
 void debug_show_all_locks(void)
