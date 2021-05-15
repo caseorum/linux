@@ -687,6 +687,31 @@ fsck_err:
 	return ret;
 }
 
+static int key_has_child_snapshots(struct btree_trans *trans,
+				   enum btree_id btree_id,
+				   struct bpos pos)
+{
+	struct btree_iter *iter;
+	struct bkey_s_c k;
+	int ret;
+
+	for_each_btree_key(trans, iter, btree_id,
+			   SPOS(pos.inode, pos.offset, 0),
+			   BTREE_ITER_ALL_SNAPSHOTS, k, ret) {
+		if (bpos_cmp(k.k->p, pos) >= 0)
+			break;
+
+		if (bch2_snapshot_is_ancestor(trans->c,
+				k.k->p.snapshot, pos.snapshot)) {
+			ret = 1;
+			break;
+		}
+	}
+
+	bch2_trans_iter_put(trans, iter);
+	return ret;
+}
+
 static int check_inode(struct btree_trans *trans,
 		       struct btree_iter *iter,
 		       struct bch_inode_unpacked *prev,
@@ -708,6 +733,14 @@ static int check_inode(struct btree_trans *trans,
 	    (!c->sb.clean ||
 	     fsck_err(c, "filesystem marked clean, but inode %llu unlinked",
 		      u.bi_inum))) {
+		ret = lockrestart_do(tran,
+			key_has_child_snapshots(trans, BTREE_ID_inodes, iter->pos));
+		if (ret) {
+
+		}
+
+		/* Does snapshot ID have children? */
+
 		/*
 		 * XXX: check if this inode isn't deleted in newer snapshots, if
 		 * so we can't delete it and should probably copy the inode
