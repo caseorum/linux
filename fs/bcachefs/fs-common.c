@@ -181,6 +181,10 @@ int bch2_create_trans(struct btree_trans *trans,
 
 	ret   = bch2_btree_iter_traverse(inode_iter) ?:
 		bch2_inode_write(trans, inode_iter, new_inode);
+	if (ret)
+		goto err;
+
+	pr_info("creating %s at %llu", name->name, new_inode->bi_inum);
 err:
 	bch2_trans_iter_put(trans, inode_iter);
 	bch2_trans_iter_put(trans, dir_iter);

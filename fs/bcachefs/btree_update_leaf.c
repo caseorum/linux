@@ -314,12 +314,29 @@ btree_key_can_insert_cached(struct btree_trans *trans,
 	return BTREE_INSERT_OK;
 }
 
+#include "inode.h"
+
 static inline void do_btree_insert_one(struct btree_trans *trans,
 				       struct btree_insert_entry *i)
 {
 	struct bch_fs *c = trans->c;
 	struct journal *j = &c->journal;
 	bool did_work;
+
+	if (i->btree_id == BTREE_ID_inodes &&
+	    i->k->k.p.offset == 4098) {
+		struct bch_inode_unpacked u;
+		char buf[200];
+
+		bch2_bkey_val_to_text(&PBUF(buf), c, bkey_i_to_s_c(i->k));
+		pr_info("%s", buf);
+#if 1
+		bch2_inode_unpack(bkey_s_c_to_inode(bkey_i_to_s_c(i->k)), &u);
+		BUG_ON(mode_to_type(u.bi_mode) == DT_REG &&
+		       i->k->k.p.snapshot < U32_MAX - 4 &&
+		       !u.bi_size);
+#endif
+	}
 
 	EBUG_ON(trans->journal_res.ref !=
 		!(trans->flags & BTREE_INSERT_JOURNAL_REPLAY));
@@ -1068,6 +1085,7 @@ static int need_whiteout_for_snapshot(struct btree_trans *trans,
 			break;
 		}
 	}
+	set_btree_iter_dontneed(trans, iter);
 	bch2_trans_iter_put(trans, iter);
 
 	return ret;

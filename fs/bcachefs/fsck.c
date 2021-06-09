@@ -970,6 +970,8 @@ static int check_extents(struct bch_fs *c)
 	struct btree_trans trans;
 	struct btree_iter *iter;
 	struct bkey_s_c k;
+	char buf1[200];
+	char buf2[200];
 	int ret = 0;
 
 #if 0
@@ -1036,8 +1038,12 @@ retry:
 			if (fsck_err_on(!(i->inode.bi_flags & BCH_INODE_I_SIZE_DIRTY) &&
 					k.k->type != KEY_TYPE_reservation &&
 					k.k->p.offset > round_up(i->inode.bi_size, block_bytes(c)) >> 9, c,
-					"extent type %u offset %llu past end of inode %llu, i_size %llu",
-					k.k->type, k.k->p.offset, k.k->p.inode, i->inode.bi_size)) {
+					"extent type past end of inode:\n"
+					"  %s\n"
+					"  %s snap %u",
+					(bch2_bkey_val_to_text(&PBUF(buf1), c, k), buf1),
+					(bch2_inode_unpacked_to_text(&PBUF(buf2), &i->inode), buf2),
+					i->snapshot)) {
 				bch2_fs_lazy_rw(c);
 				ret = bch2_btree_delete_range_trans(&trans, BTREE_ID_extents,
 						POS(k.k->p.inode, round_up(i->inode.bi_size, block_bytes(c)) >> 9),
@@ -1048,6 +1054,9 @@ retry:
 
 			if (bkey_extent_is_allocation(k.k))
 				i->count += k.k->size;
+
+			if (i->snapshot >= k.k->p.snapshot)
+				break;
 		}
 #if 0
 		bch2_bkey_buf_reassemble(&prev, c, k);

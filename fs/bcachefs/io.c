@@ -322,8 +322,14 @@ int bch2_extent_update(struct btree_trans *trans,
 		if (!(inode_u.bi_flags & BCH_INODE_I_SIZE_DIRTY) &&
 		    new_i_size > inode_u.bi_size)
 			inode_u.bi_size = new_i_size;
-		else
+		else {
+			if (k->k.type != KEY_TYPE_reservation &&
+			    !inode_u.bi_size)
+				panic("new_i_size %llu\n", new_i_size);
 			new_i_size = 0;
+		}
+
+		BUG_ON(k->k.type != KEY_TYPE_reservation && !inode_u.bi_size);
 
 		inode_u.bi_sectors += i_sectors_delta;
 
