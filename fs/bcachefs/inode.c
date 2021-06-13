@@ -309,7 +309,8 @@ struct btree_iter *bch2_inode_peek(struct btree_trans *trans,
 
 	iter = bch2_trans_get_iter(trans, BTREE_ID_inodes,
 				   SPOS(0, inum.inum, snapshot),
-				   BTREE_ITER_CACHED|flags);
+				   //BTREE_ITER_CACHED|
+				   flags);
 	k = bch2_btree_iter_peek_slot(iter);
 	ret = bkey_err(k);
 	if (ret)
@@ -690,7 +691,7 @@ retry:
 
 	iter = bch2_trans_get_iter(&trans, BTREE_ID_inodes,
 				   SPOS(0, inum.inum, snapshot),
-				   (cached
+				   (0 && cached
 				    ? BTREE_ITER_CACHED
 				    : BTREE_ITER_SLOTS)|
 				   BTREE_ITER_INTENT);
