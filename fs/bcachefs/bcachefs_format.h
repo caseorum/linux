@@ -963,6 +963,8 @@ struct bch_snapshot {
 	struct bch_val		v;
 	__le32			flags;
 	__le32			parent;
+	__le32			l_child;
+	__le32			r_child;
 	__le32			subvol;
 	__le32			pad;
 };

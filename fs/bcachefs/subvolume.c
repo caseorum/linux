@@ -328,6 +328,65 @@ err:
 	return ret;
 }
 
+static bool snapshot_id_is_dying(struct bch_fs *c, unsigned snapshot)
+{
+}
+
+static int bch2_snapshot_delete_keys_btree(struct btree_trans *trans, enum btree_id btree_id)
+{
+	struct btree_iter *iter;
+	struct bkey_s_c k;
+	struct bkey_i delete;
+	int ret = 0;
+
+	iter = bch2_trans_get_iter(trans, btree_id, POS_MIN,
+				   BTREE_ITER_INTENT|
+				   BTREE_ITER_PREFETCH|
+				   BTREE_ITER_NOT_EXTENTS|
+				   BTREE_ITER_ALL_SNAPSHOTS);
+
+	while ((bch2_trans_begin(trans),
+		(k = bch2_btree_iter_peek(iter)).k) &&
+	       !(ret = bkey_err(k))) {
+		if (snapshot_id_is_dying(trans->c, k.k->p.snapshot)) {
+			bkey_init(&delete.k);
+			delete.k.p = k.k->p;
+
+			ret   = bch2_trans_update(trans, iter, &delete, 0) ?:
+				bch2_trans_commit(trans, NULL, NULL, 0);
+			if (ret == -EINTR)
+				continue;
+			if (ret)
+				break;
+		}
+
+		bch2_btree_iter_advance(iter);
+	}
+	bch2_trans_iter_put(trans, iter);
+
+	return ret;
+}
+
+static int bch2_snapshot_delete_keys(struct bch_fs *c)
+{
+	struct btree_trans trans;
+	enum btree_id id;
+	int ret = 0;
+
+	bch2_trans_init(&trans, c, 0, 0);
+
+	for (id = 0; id < BTREE_ID_NR && !ret; id++) {
+		if (!btree_type_has_snapshots(id))
+			continue;
+
+		ret = bch2_snapshot_delete_keys_btree(&trans, id);
+	}
+
+	bch2_trans_exit(&trans);
+
+	return ret;
+}
+
 /* Subvolumes: */
 
 const char *bch2_subvolume_invalid(const struct bch_fs *c, struct bkey_s_c k)
