@@ -491,7 +491,8 @@ static int bch2_link(struct dentry *old_dentry, struct inode *vdir,
 	return 0;
 }
 
-static int bch2_unlink(struct inode *vdir, struct dentry *dentry)
+int __bch2_unlink(struct inode *vdir, struct dentry *dentry,
+		  int deleting_snapshot)
 {
 	struct bch_fs *c = vdir->i_sb->s_fs_info;
 	struct bch_inode_info *dir = to_bch_ei(vdir);
@@ -508,7 +509,8 @@ static int bch2_unlink(struct inode *vdir, struct dentry *dentry)
 			      BTREE_INSERT_NOFAIL,
 			bch2_unlink_trans(&trans,
 					  inode_inum(dir), &dir_u,
-					  &inode_u, &dentry->d_name));
+					  &inode_u, &dentry->d_name,
+					  deleting_snapshot));
 
 	if (likely(!ret)) {
 		BUG_ON(inode_u.bi_inum != inode->v.i_ino);
@@ -524,6 +526,11 @@ static int bch2_unlink(struct inode *vdir, struct dentry *dentry)
 	bch2_unlock_inodes(INODE_UPDATE_LOCK, dir, inode);
 
 	return ret;
+}
+
+static int bch2_unlink(struct inode *vdir, struct dentry *dentry)
+{
+	return __bch2_unlink(vdir, dentry, -1);
 }
 
 static int bch2_symlink(struct user_namespace *mnt_userns,

@@ -713,7 +713,7 @@ retry:
 
 	/* Subvolume root? */
 	if (inode_u.bi_subvol) {
-		ret = bch2_subvolume_delete(&trans, inode_u.bi_subvol);
+		ret = bch2_subvolume_delete(&trans, inode_u.bi_subvol, -1);
 		if (ret)
 			goto err;
 	}

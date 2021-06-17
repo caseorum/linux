@@ -325,6 +325,7 @@ static long bch2_ioctl_subvolume_create(struct bch_fs *c, struct file *filp,
 	if (arg.flags & BCH_SUBVOL_SNAPSHOT_RO)
 		create_flags |= BCH_CREATE_SNAPSHOT_RO;
 
+	/* why do we need this lock? */
 	down_read(&c->vfs_sb->s_umount);
 
 	if (arg.flags & BCH_SUBVOL_SNAPSHOT_CREATE)
@@ -420,10 +421,25 @@ err1:
 static long bch2_ioctl_subvolume_destroy(struct bch_fs *c, struct file *filp,
 				struct bch_ioctl_subvolume arg)
 {
+	struct path path;
 	int ret = 0;
 
 	if (arg.flags)
 		return -EINVAL;
+
+	ret = user_path_at(arg.dirfd,
+			(const char __user *)(unsigned long)arg.dst_ptr,
+			LOOKUP_FOLLOW, &path);
+	if (ret)
+		return ret;
+
+	if (path.dentry->d_sb->s_fs_info != c) {
+		path_put(&path);
+		return -EXDEV;
+	}
+
+	ret = __bch2_unlink(path.dentry->d_parent->d_inode, path.dentry, 1);
+	path_put(&path);
 
 	return ret;
 }

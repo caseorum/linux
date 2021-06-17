@@ -383,27 +383,81 @@ err:
 }
 
 /* XXX: mark snapshot id for deletion, walk btree and delete: */
-int bch2_subvolume_delete(struct btree_trans *trans, u32 subvolid)
+int bch2_subvolume_delete(struct btree_trans *trans, u32 subvolid,
+			  int deleting_snapshot)
 {
 	struct btree_iter *iter;
+	struct bkey_s_c k;
+	struct bkey_s_c_subvolume subvol;
 	struct bkey_i *delete;
+	struct bkey_i_snapshot *snapshot;
+	u32 snapid;
 	int ret = 0;
-
-	delete = bch2_trans_kmalloc(trans, sizeof(*delete));
-	ret = PTR_ERR_OR_ZERO(delete);
-	if (ret)
-		return ret;
 
 	iter = bch2_trans_get_iter(trans, BTREE_ID_subvolumes,
 				   POS(0, subvolid),
 				   BTREE_ITER_CACHED|
 				   BTREE_ITER_INTENT);
+	k = bch2_btree_iter_peek_slot(iter);
+	ret = bkey_err(k);
+	if (ret)
+		goto err;
+
+	if (k.k->type != KEY_TYPE_subvolume) {
+		bch2_fs_inconsistent(trans->c, "missing subvolume %u", subvolid);
+		ret = -EIO;
+		goto err;
+	}
+
+	subvol = bkey_s_c_to_subvolume(k);
+	snapid = le32_to_cpu(subvol.v->snapshot);
+
+	if (deleting_snapshot >= 0 &&
+	    deleting_snapshot != BCH_SUBVOLUME_SNAP(subvol.v)) {
+		ret = -ENOENT;
+		goto err;
+	}
+
+	delete = bch2_trans_kmalloc(trans, sizeof(*delete));
+	ret = PTR_ERR_OR_ZERO(delete);
+	if (ret)
+		goto err;
 
 	bkey_init(&delete->k);
 	delete->k.p = iter->pos;
-	bch2_trans_update(trans, iter, delete, 0);
+	ret = bch2_trans_update(trans, iter, delete, 0);
+	if (ret)
+		goto err;
+
 	bch2_trans_iter_put(trans, iter);
-	return 0;
+
+	iter = bch2_trans_get_iter(trans, BTREE_ID_snapshots,
+				   POS(0, subvolid),
+				   BTREE_ITER_INTENT);
+	k = bch2_btree_iter_peek_slot(iter);
+	ret = bkey_err(k);
+	if (ret)
+		goto err;
+
+	if (k.k->type != KEY_TYPE_snapshot) {
+		bch2_fs_inconsistent(trans->c, "missing snapshot %u", snapid);
+		ret = -EIO;
+		goto err;
+	}
+
+	snapshot = bch2_trans_kmalloc(trans, sizeof(*snapshot));
+	ret = PTR_ERR_OR_ZERO(snapshot);
+	if (ret)
+		goto err;
+
+	bkey_reassemble(&snapshot->k_i, k);
+	SET_BCH_SNAPSHOT_DELETED(&snapshot->v, true);
+	ret = bch2_trans_update(trans, iter, &snapshot->k_i, 0);
+	if (ret)
+		goto err;
+err:
+	bch2_trans_iter_put(trans, iter);
+	return ret;
 }
 
 int bch2_subvolume_create(struct btree_trans *trans, u64 inode,

@@ -246,7 +246,8 @@ int bch2_unlink_trans(struct btree_trans *trans,
 		      subvol_inum dir,
 		      struct bch_inode_unpacked *dir_u,
 		      struct bch_inode_unpacked *inode_u,
-		      const struct qstr *name)
+		      const struct qstr *name,
+		      int deleting_snapshot)
 {
 	struct bch_fs *c = trans->c;
 	struct btree_iter *dir_iter = NULL, *dirent_iter = NULL,
@@ -275,22 +276,28 @@ int bch2_unlink_trans(struct btree_trans *trans,
 	if (ret)
 		goto err;
 
-	if (inode_u->bi_dir		== dirent_iter->pos.inode &&
-	    inode_u->bi_dir_offset	== dirent_iter->pos.offset) {
-		inode_u->bi_dir		= 0;
-		inode_u->bi_dir_offset	= 0;
+	if (deleting_snapshot == 1 && !inode_u->bi_subvol) {
+		ret = -ENOENT;
+		goto err;
 	}
 
-	if (S_ISDIR(inode_u->bi_mode)) {
+	if (deleting_snapshot <= 0 && S_ISDIR(inode_u->bi_mode)) {
 		ret = bch2_empty_dir_trans(trans, inum);
 		if (ret)
 			goto err;
 	}
 
-	if (dir.subvol != inum.subvol) {
-		ret = bch2_subvolume_delete(trans, inum.subvol);
+	if (inode_u->bi_subvol) {
+		ret = bch2_subvolume_delete(trans, inode_u->bi_subvol,
+					    deleting_snapshot);
 		if (ret)
 			goto err;
+	}
+
+	if (inode_u->bi_dir		== dirent_iter->pos.inode &&
+	    inode_u->bi_dir_offset	== dirent_iter->pos.offset) {
+		inode_u->bi_dir		= 0;
+		inode_u->bi_dir_offset	= 0;
 	}
 
 	dir_u->bi_mtime = dir_u->bi_ctime = inode_u->bi_ctime = now;

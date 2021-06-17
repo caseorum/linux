@@ -950,12 +950,12 @@ struct bch_subvolume {
 	__le64			inode;
 };
 
-LE64_BITMASK(BCH_SUBVOLUME_RO,	struct bch_subvolume, flags,  0,  1)
+LE32_BITMASK(BCH_SUBVOLUME_RO,		struct bch_subvolume, flags,  0,  1)
 /*
  * We need to know whether a subvolume is a snapshot so we can know whether we
  * can delete it (or whether it should just be rm -rf'd)
  */
-LE64_BITMASK(BCH_SUBVOLUME_SNAP,struct bch_subvolume, flags,  1,  2)
+LE32_BITMASK(BCH_SUBVOLUME_SNAP,	struct bch_subvolume, flags,  1,  2)
 
 /* Snapshots */
 
@@ -966,6 +966,8 @@ struct bch_snapshot {
 	__le32			subvol;
 	__le32			pad;
 };
+
+LE32_BITMASK(BCH_SNAPSHOT_DELETED,	struct bch_snapshot, flags,  0,  1)
 
 /* Optional/variable size superblock sections: */
 
