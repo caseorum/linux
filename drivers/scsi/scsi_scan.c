@@ -1717,8 +1717,10 @@ static struct async_scan_data *scsi_prep_async_scan(struct Scsi_Host *shost)
 	struct async_scan_data *data = NULL;
 	unsigned long flags;
 
-	if (strncmp(scsi_scan_type, "sync", 4) == 0)
+	if (strncmp(scsi_scan_type, "sync", 4) == 0) {
+		printk("scsi_scan_type sync halts here...");
 		return NULL;
+	}
 
 	mutex_lock(&shost->scan_mutex);
 	if (shost->async_scan) {
@@ -1842,7 +1844,8 @@ void scsi_scan_host(struct Scsi_Host *shost)
 	if (scsi_autopm_get_host(shost) < 0)
 		return;
 
-	data = scsi_prep_async_scan(shost);
+	data = scsi_prep_async_scan(shost);	
+	printk("scsi_scan_type ...and never returns here");
 	if (!data) {
 		do_scsi_scan_host(shost);
 		scsi_autopm_put_host(shost);
