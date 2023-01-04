@@ -1233,8 +1233,11 @@ struct btree_path *__bch2_btree_path_make_mut(struct btree_trans *trans,
 			 struct btree_path *path, bool intent,
 			 unsigned long ip)
 {
+	struct btree_path *old = path;
+
 	__btree_path_put(path, intent);
 	path = btree_path_clone(trans, path, intent);
+	trace_btree_path_clone(old, path);
 	path->preserve = false;
 	return path;
 }
@@ -1248,6 +1251,9 @@ __bch2_btree_path_set_pos(struct btree_trans *trans,
 
 	EBUG_ON(trans->restarted);
 	EBUG_ON(!path->ref);
+
+	if (path->ref > 1 || path->preserve)
+		trace_btree_path_set_pos(path, &new_pos);
 
 	path = bch2_btree_path_make_mut(trans, path, intent, ip);
 
@@ -1346,6 +1352,8 @@ void bch2_path_put(struct btree_trans *trans, struct btree_path *path, bool inte
 	dup = path->preserve
 		? have_path_at_pos(trans, path)
 		: have_node_at_pos(trans, path);
+
+	trace_btree_path_free(path, dup);
 
 	if (!dup && !(!path->preserve && !is_btree_node(path, path->level)))
 		return;
@@ -1540,6 +1548,8 @@ struct btree_path *bch2_path_get(struct btree_trans *trans,
 	    path_pos->cached	== cached &&
 	    path_pos->btree_id	== btree_id &&
 	    path_pos->level	== level) {
+		trace_btree_path_get(path_pos, &pos);
+
 		__btree_path_get(path_pos, intent);
 		path = bch2_btree_path_set_pos(trans, path_pos, pos, intent, ip);
 	} else {
@@ -1561,6 +1571,8 @@ struct btree_path *bch2_path_get(struct btree_trans *trans,
 		path->ip_allocated		= ip;
 #endif
 		trans->paths_sorted		= false;
+
+		trace_btree_path_alloc(path);
 	}
 
 	if (!(flags & BTREE_ITER_NOPRESERVE))
@@ -2336,6 +2348,7 @@ struct bkey_s_c bch2_btree_iter_peek_prev(struct btree_iter *iter)
 						      iter->flags & BTREE_ITER_INTENT);
 					saved_path = btree_path_clone(trans, iter->path,
 								iter->flags & BTREE_ITER_INTENT);
+					trace_btree_path_save_pos(iter->path, saved_path);
 					saved_k = *k.k;
 					saved_v = k.v;
 				}

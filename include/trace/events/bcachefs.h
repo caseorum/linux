@@ -1130,6 +1130,193 @@ TRACE_EVENT(trans_restart_key_cache_key_realloced,
 		  __entry->new_u64s)
 );
 
+TRACE_EVENT(btree_path_alloc,
+	TP_PROTO(struct btree_path *path),
+	TP_ARGS(path),
+
+	TP_STRUCT__entry(
+		__field(u8,			idx		)
+		__field(u8,			locks_want	)
+		__field(u8,			btree_id	)
+		TRACE_BPOS_entries(pos)
+	),
+
+	TP_fast_assign(
+		__entry->idx			= path->idx;
+		__entry->locks_want		= path->locks_want;
+		__entry->btree_id		= path->btree_id;
+		TRACE_BPOS_assign(pos, path->pos);
+	),
+
+	TP_printk("  idx %u btree %s locks_want %u pos %llu:%llu:%u",
+		  __entry->idx,
+		  bch2_btree_ids[__entry->btree_id],
+		  __entry->locks_want,
+		  __entry->pos_inode,
+		  __entry->pos_offset,
+		  __entry->pos_snapshot)
+);
+
+TRACE_EVENT(btree_path_get,
+	TP_PROTO(struct btree_path *path,
+		 struct bpos *new_pos),
+	TP_ARGS(path, new_pos),
+
+	TP_STRUCT__entry(
+		__field(u8,			idx		)
+		__field(u8,			ref		)
+		__field(u8,			preserve	)
+		__field(u8,			locks_want	)
+		__field(u8,			btree_id	)
+		TRACE_BPOS_entries(old_pos)
+		TRACE_BPOS_entries(new_pos)
+	),
+
+	TP_fast_assign(
+		__entry->idx			= path->idx;
+		__entry->ref			= path->ref;
+		__entry->preserve		= path->preserve;
+		__entry->locks_want		= path->locks_want;
+		__entry->btree_id		= path->btree_id;
+		TRACE_BPOS_assign(old_pos, path->pos);
+		TRACE_BPOS_assign(new_pos, *new_pos);
+	),
+
+	TP_printk("    idx %2u ref %u preserve %u btree %s locks_want %u pos %llu:%llu:%u -> %llu:%llu:%u",
+		  __entry->idx,
+		  __entry->ref,
+		  __entry->preserve,
+		  bch2_btree_ids[__entry->btree_id],
+		  __entry->locks_want,
+		  __entry->old_pos_inode,
+		  __entry->old_pos_offset,
+		  __entry->old_pos_snapshot,
+		  __entry->new_pos_inode,
+		  __entry->new_pos_offset,
+		  __entry->new_pos_snapshot)
+);
+
+DECLARE_EVENT_CLASS(btree_path_clone,
+	TP_PROTO(struct btree_path *path, struct btree_path *new),
+	TP_ARGS(path, new),
+
+	TP_STRUCT__entry(
+		__field(u8,			idx		)
+		__field(u8,			new_idx		)
+		__field(u8,			btree_id	)
+		__field(u8,			ref		)
+		__field(u8,			preserve	)
+		TRACE_BPOS_entries(pos)
+	),
+
+	TP_fast_assign(
+		__entry->idx			= path->idx;
+		__entry->new_idx		= new->idx;
+		__entry->btree_id		= path->btree_id;
+		__entry->ref			= path->ref;
+		__entry->preserve		= path->preserve;
+		TRACE_BPOS_assign(pos, path->pos);
+	),
+
+	TP_printk("  idx %2u ref %u preserve %u btree %s %llu:%llu:%u -> %u",
+		  __entry->idx,
+		  __entry->ref,
+		  __entry->preserve,
+		  bch2_btree_ids[__entry->btree_id],
+		  __entry->pos_inode,
+		  __entry->pos_offset,
+		  __entry->pos_snapshot,
+		  __entry->new_idx)
+);
+
+DEFINE_EVENT(btree_path_clone, btree_path_clone,
+	TP_PROTO(struct btree_path *path, struct btree_path *new),
+	TP_ARGS(path, new)
+);
+
+DEFINE_EVENT(btree_path_clone, btree_path_save_pos,
+	TP_PROTO(struct btree_path *path, struct btree_path *new),
+	TP_ARGS(path, new)
+);
+
+TRACE_EVENT(btree_path_set_pos,
+	TP_PROTO(struct btree_path *path,
+		 struct bpos *new_pos),
+	TP_ARGS(path, new_pos),
+
+	TP_STRUCT__entry(
+		__field(u8,			idx		)
+		__field(u8,			ref		)
+		__field(u8,			preserve	)
+		__field(u8,			btree_id	)
+		TRACE_BPOS_entries(old_pos)
+		TRACE_BPOS_entries(new_pos)
+	),
+
+	TP_fast_assign(
+		__entry->idx			= path->idx;
+		__entry->ref			= path->ref;
+		__entry->preserve		= path->preserve;
+		__entry->btree_id		= path->btree_id;
+		TRACE_BPOS_assign(old_pos, path->pos);
+		TRACE_BPOS_assign(new_pos, *new_pos);
+	),
+
+	TP_printk("idx %2u ref %u preserve %u btree %s %llu:%llu:%u -> %llu:%llu:%u",
+		  __entry->idx,
+		  __entry->ref,
+		  __entry->preserve,
+		  bch2_btree_ids[__entry->btree_id],
+		  __entry->old_pos_inode,
+		  __entry->old_pos_offset,
+		  __entry->old_pos_snapshot,
+		  __entry->new_pos_inode,
+		  __entry->new_pos_offset,
+		  __entry->new_pos_snapshot)
+);
+
+TRACE_EVENT(btree_path_free,
+	TP_PROTO(struct btree_path *path, struct btree_path *dup),
+	TP_ARGS(path, dup),
+
+	TP_STRUCT__entry(
+		__field(u8,			idx		)
+		__field(u8,			preserve	)
+		__field(u8,			should_be_locked)
+		__field(s8,			dup		)
+		__field(u8,			dup_locked	)
+	),
+
+	TP_fast_assign(
+		__entry->idx			= path->idx;
+		__entry->preserve		= path->preserve;
+		__entry->should_be_locked	= path->should_be_locked;
+		__entry->dup			= dup ? dup->idx : -1;
+		__entry->dup_locked		= dup ? btree_node_locked(dup, dup->level) : 0;
+	),
+
+	TP_printk("   idx %2u %c %c dup %2i locked %u", __entry->idx,
+		  __entry->preserve ? 'P' : ' ',
+		  __entry->should_be_locked ? 'S' : ' ',
+		  __entry->dup,
+		  __entry->dup_locked)
+);
+
+TRACE_EVENT(btree_path_free_trans_begin,
+	TP_PROTO(struct btree_path *path),
+	TP_ARGS(path),
+
+	TP_STRUCT__entry(
+		__field(u8,			idx		)
+	),
+
+	TP_fast_assign(
+		__entry->idx			= path->idx;
+	),
+
+	TP_printk("   idx %2u", __entry->idx)
+);
+
 #endif /* _TRACE_BCACHE_H */
 
 /* This part must be outside protection */
