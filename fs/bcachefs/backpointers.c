@@ -799,7 +799,7 @@ static inline struct bbpos bp_to_bbpos(struct bch_backpointer bp)
 static size_t btree_nodes_fit_in_ram(struct bch_fs *c)
 {
 	struct sysinfo i;
-	u64 mem_bytes;
+	size_t mem_bytes;
 
 	si_meminfo(&i);
 	mem_bytes = i.totalram * i.mem_unit;
