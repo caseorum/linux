@@ -5,14 +5,13 @@
  * Copyright (C) 2015, 2020 Tom Zanussi <tom.zanussi@linux.intel.com>
  */
 
-#include <linux/kallsyms.h>
 #include <linux/module.h>
-#include <linux/mutex.h>
-#include <linux/printbuf.h>
-#include <linux/rculist.h>
+#include <linux/kallsyms.h>
 #include <linux/security.h>
+#include <linux/mutex.h>
 #include <linux/slab.h>
 #include <linux/stacktrace.h>
+#include <linux/rculist.h>
 #include <linux/tracefs.h>
 
 /* for gfp flag names */
@@ -623,7 +622,7 @@ static struct synth_field *parse_synth_field(int argc, char **argv,
 	const char *prefix = NULL, *field_type = argv[0], *field_name, *array;
 	struct synth_field *field;
 	int len, ret = -ENOMEM;
-	struct printbuf buf;
+	struct seq_buf s;
 	ssize_t size;
 
 	if (!strcmp(field_type, "unsigned")) {
@@ -666,16 +665,28 @@ static struct synth_field *parse_synth_field(int argc, char **argv,
 		goto free;
 	}
 
-	buf = PRINTBUF;
-	if (prefix)
-		prt_str(&buf, prefix);
-	prt_str(&buf, field_type);
+	len = strlen(field_type) + 1;
+
 	if (array)
-		prt_str(&buf, array);
-	if (buf.allocation_failure)
+		len += strlen(array);
+
+	if (prefix)
+		len += strlen(prefix);
+
+	field->type = kzalloc(len, GFP_KERNEL);
+	if (!field->type)
 		goto free;
 
-	field->type = buf.buf;
+	seq_buf_init(&s, field->type, len);
+	if (prefix)
+		seq_buf_puts(&s, prefix);
+	seq_buf_puts(&s, field_type);
+	if (array)
+		seq_buf_puts(&s, array);
+	if (WARN_ON_ONCE(!seq_buf_buffer_left(&s)))
+		goto free;
+
+	s.buffer[s.len] = '\0';
 
 	size = synth_field_size(field->type);
 	if (size < 0) {
@@ -687,15 +698,23 @@ static struct synth_field *parse_synth_field(int argc, char **argv,
 		goto free;
 	} else if (size == 0) {
 		if (synth_field_is_string(field->type)) {
-			buf = PRINTBUF;
-			prt_str(&buf, "__data_loc ");
-			prt_str(&buf, field->type);
+			char *type;
 
-			if (buf.allocation_failure)
+			len = sizeof("__data_loc ") + strlen(field->type) + 1;
+			type = kzalloc(len, GFP_KERNEL);
+			if (!type)
 				goto free;
 
+			seq_buf_init(&s, type, len);
+			seq_buf_puts(&s, "__data_loc ");
+			seq_buf_puts(&s, field->type);
+
+			if (WARN_ON_ONCE(!seq_buf_buffer_left(&s)))
+				goto free;
+			s.buffer[s.len] = '\0';
+
 			kfree(field->type);
-			field->type = buf.buf;
+			field->type = type;
 
 			field->is_dynamic = true;
 			size = sizeof(u64);
