@@ -1679,15 +1679,15 @@ static ssize_t trace_seq_to_buffer(struct trace_seq *s, void *buf, size_t cnt)
 {
 	int len;
 
-	if (trace_seq_used(s) <= s->readpos)
+	if (trace_seq_used(s) <= s->seq.readpos)
 		return -EBUSY;
 
-	len = trace_seq_used(s) - s->readpos;
+	len = trace_seq_used(s) - s->seq.readpos;
 	if (cnt > len)
 		cnt = len;
-	memcpy(buf, s->buffer + s->readpos, cnt);
+	memcpy(buf, s->buffer + s->seq.readpos, cnt);
 
-	s->readpos += cnt;
+	s->seq.readpos += cnt;
 	return cnt;
 }
 
@@ -3752,7 +3752,11 @@ static bool trace_safe_str(struct trace_iterator *iter, const char *str,
 
 static const char *show_buffer(struct trace_seq *s)
 {
-	return printbuf_str(&s->seq);
+	struct seq_buf *seq = &s->seq;
+
+	seq_buf_terminate(seq);
+
+	return seq->buffer;
 }
 
 static DEFINE_STATIC_KEY_FALSE(trace_no_verify);
@@ -6788,12 +6792,12 @@ waitagain:
 	trace_access_lock(iter->cpu_file);
 	while (trace_find_next_entry_inc(iter) != NULL) {
 		enum print_line_t ret;
-		int save_pos = iter->seq.seq.pos;
+		int save_len = iter->seq.seq.len;
 
 		ret = print_trace_line(iter);
 		if (ret == TRACE_TYPE_PARTIAL_LINE) {
 			/* don't print partial lines */
-			iter->seq.seq.pos = save_pos;
+			iter->seq.seq.len = save_len;
 			break;
 		}
 		if (ret != TRACE_TYPE_NO_CONSUME)
@@ -6815,7 +6819,7 @@ waitagain:
 
 	/* Now copy what we have to the user */
 	sret = trace_seq_to_user(&iter->seq, ubuf, cnt);
-	if (iter->seq.readpos >= trace_seq_used(&iter->seq))
+	if (iter->seq.seq.readpos >= trace_seq_used(&iter->seq))
 		trace_seq_init(&iter->seq);
 
 	/*
@@ -6841,15 +6845,16 @@ static size_t
 tracing_fill_pipe_page(size_t rem, struct trace_iterator *iter)
 {
 	size_t count;
+	int save_len;
 	int ret;
 
 	/* Seq buffer is page-sized, exactly what we need. */
 	for (;;) {
-		unsigned save_pos = iter->seq.seq.pos;
+		save_len = iter->seq.seq.len;
 		ret = print_trace_line(iter);
 
 		if (trace_seq_has_overflowed(&iter->seq)) {
-			iter->seq.seq.pos = save_pos;
+			iter->seq.seq.len = save_len;
 			break;
 		}
 
@@ -6859,14 +6864,14 @@ tracing_fill_pipe_page(size_t rem, struct trace_iterator *iter)
 		 * anyway to be safe.
 		 */
 		if (ret == TRACE_TYPE_PARTIAL_LINE) {
-			iter->seq.seq.pos = save_pos;
+			iter->seq.seq.len = save_len;
 			break;
 		}
 
-		count = trace_seq_used(&iter->seq) - save_pos;
+		count = trace_seq_used(&iter->seq) - save_len;
 		if (rem < count) {
 			rem = 0;
-			iter->seq.seq.pos = save_pos;
+			iter->seq.seq.len = save_len;
 			break;
 		}
 
@@ -9900,8 +9905,20 @@ static struct notifier_block trace_die_notifier = {
 void
 trace_printk_seq(struct trace_seq *s)
 {
+	/* Probably should print a warning here. */
+	if (s->seq.len >= TRACE_MAX_PRINT)
+		s->seq.len = TRACE_MAX_PRINT;
+
+	/*
+	 * More paranoid code. Although the buffer size is set to
+	 * PAGE_SIZE, and TRACE_MAX_PRINT is 1000, this is just
+	 * an extra layer of protection.
+	 */
+	if (WARN_ON_ONCE(s->seq.len >= s->seq.size))
+		s->seq.len = s->seq.size - 1;
+
 	/* should be zero ended, but we are paranoid. */
-	printbuf_nul_terminate(&s->seq);
+	s->buffer[s->seq.len] = 0;
 
 	printk(KERN_TRACE "%s", s->buffer);
 

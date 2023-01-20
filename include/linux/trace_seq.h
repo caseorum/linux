@@ -2,11 +2,9 @@
 #ifndef _LINUX_TRACE_SEQ_H
 #define _LINUX_TRACE_SEQ_H
 
-#include <linux/printbuf.h>
+#include <linux/seq_buf.h>
 
 #include <asm/page.h>
-
-struct seq_file;
 
 /*
  * Trace sequences are used to allow a function to call several other functions
@@ -15,16 +13,14 @@ struct seq_file;
 
 struct trace_seq {
 	char			buffer[PAGE_SIZE];
-	struct printbuf		seq;
-	unsigned		readpos;
+	struct seq_buf		seq;
 	int			full;
 };
 
 static inline void
 trace_seq_init(struct trace_seq *s)
 {
-	s->seq = PRINTBUF_EXTERN(s->buffer, PAGE_SIZE);
-	s->readpos = 0;
+	seq_buf_init(&s->seq, s->buffer, PAGE_SIZE);
 	s->full = 0;
 }
 
@@ -43,7 +39,7 @@ trace_seq_init(struct trace_seq *s)
  */
 static inline int trace_seq_used(struct trace_seq *s)
 {
-	return printbuf_written(&s->seq);
+	return seq_buf_used(&s->seq);
 }
 
 /**
@@ -58,7 +54,7 @@ static inline int trace_seq_used(struct trace_seq *s)
 static inline char *
 trace_seq_buffer_ptr(struct trace_seq *s)
 {
-	return s->buffer + printbuf_written(&s->seq);
+	return s->buffer + seq_buf_used(&s->seq);
 }
 
 /**
@@ -70,7 +66,7 @@ trace_seq_buffer_ptr(struct trace_seq *s)
  */
 static inline bool trace_seq_has_overflowed(struct trace_seq *s)
 {
-	return s->full || printbuf_overflowed(&s->seq);
+	return s->full || seq_buf_has_overflowed(&s->seq);
 }
 
 /*
@@ -91,7 +87,6 @@ extern void trace_seq_putc(struct trace_seq *s, unsigned char c);
 extern void trace_seq_putmem(struct trace_seq *s, const void *mem, unsigned int len);
 extern void trace_seq_putmem_hex(struct trace_seq *s, const void *mem,
 				unsigned int len);
-struct path;
 extern int trace_seq_path(struct trace_seq *s, const struct path *path);
 
 extern void trace_seq_bitmask(struct trace_seq *s, const unsigned long *maskp,
